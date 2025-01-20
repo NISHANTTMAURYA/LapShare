@@ -596,11 +596,40 @@ def import_file():
             if os.path.exists(url_file):
                 os.remove(url_file)
             
-            # Clean and recreate temp directory
+            # Clean and recreate temp directory with proper cleanup
             if os.path.exists(temp_dir):
                 print(f"Debug: Removing existing temp directory")
-                shutil.rmtree(temp_dir)
-            os.makedirs(temp_dir)
+                try:
+                    # Change directory to parent to release lock on temp_dir
+                    os.chdir(script_dir)
+                    # Wait for a moment to ensure all processes release the directory
+                    time.sleep(0.5)
+                    # Try multiple times to remove the directory
+                    for _ in range(3):
+                        try:
+                            shutil.rmtree(temp_dir)
+                            break
+                        except Exception as e:
+                            print(f"Attempt to remove directory failed: {e}")
+                            time.sleep(0.5)
+                except Exception as e:
+                    print(f"Failed to remove temp directory: {e}")
+                    # If we can't remove it, try to clean its contents
+                    try:
+                        for item in os.listdir(temp_dir):
+                            item_path = os.path.join(temp_dir, item)
+                            try:
+                                if os.path.isfile(item_path):
+                                    os.unlink(item_path)
+                                elif os.path.isdir(item_path):
+                                    shutil.rmtree(item_path)
+                            except Exception as e:
+                                print(f"Failed to remove {item_path}: {e}")
+                    except Exception as e:
+                        print(f"Failed to clean temp directory contents: {e}")
+            
+            # Create temp directory if it doesn't exist
+            os.makedirs(temp_dir, exist_ok=True)
             
             # Copy all selected files to temp directory
             for file_path in files:
@@ -673,11 +702,23 @@ class app:
             
         try:
             if self.server:
+                # Change directory before shutting down server
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                os.chdir(script_dir)
                 self.server.shutdown()  # Shutdown the server properly
                 self.server.server_close()
                 self.server = None
+            
             cleanup_ports_background()
             self.cleanup_done = True
+            
+            # Clean up temp directory
+            temp_dir = os.path.join(script_dir, 'temp_serve')
+            if os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                except:
+                    pass
             
             self.master.destroy()
                 

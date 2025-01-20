@@ -253,17 +253,40 @@ import os,shutil
 from tkinter.filedialog import SaveFileDialog,askdirectory
 def cleanup_ports_background():
     def cleanup():
-        print("Starting quick cleanup...")
+        print("Starting cleanup...")
         try:
-            # Quick kill for ngrok - no waiting
+            # Kill any existing ngrok processes
             if os.name == 'nt':  # Windows
-                subprocess.run(['taskkill', '/F', '/IM', 'ngrok.exe'], 
-                             shell=True, 
-                             stderr=subprocess.DEVNULL)
+                try:
+                    # Try taskkill first with shorter timeout
+                    subprocess.run(['taskkill', '/F', '/IM', 'ngrok.exe'], 
+                                 shell=True, 
+                                 stderr=subprocess.DEVNULL,
+                                 timeout=2)  # Reduced timeout
+                except subprocess.TimeoutExpired:
+                    pass  # Skip the netstat check to save time
             else:  # Unix/Mac
                 subprocess.run(['pkill', '-9', 'ngrok'], 
                              shell=True, 
                              stderr=subprocess.DEVNULL)
+            
+            # Quick cleanup of ngrok
+            try:
+                ngrok.kill()
+            except:
+                pass
+                
+            # Only disconnect active tunnels
+            try:
+                tunnels = ngrok.get_tunnels()
+                if tunnels:  # Only if there are active tunnels
+                    for tunnel in tunnels:
+                        ngrok.disconnect(tunnel.public_url)
+            except:
+                pass
+                
+            time.sleep(0.5)  # Reduced wait time
+            
         except Exception as e:
             print(f"Cleanup note: {e}")
 
@@ -271,6 +294,7 @@ def cleanup_ports_background():
     thread = threading.Thread(target=cleanup)
     thread.daemon = True
     thread.start()
+    time.sleep(1)  # Reduced wait time
 
 def get_python_command():
     """Dynamically determine the correct Python command"""
@@ -430,11 +454,29 @@ def start_ngrok(port):
         # Set the auth token
         ngrok.set_auth_token(auth_token)
         
-        # Open an Ngrok tunnel on the specified port
-        https_url = ngrok.connect(port).public_url
-        print(f"\nNgrok Tunnel URL: {https_url}")
-        print("Visit the Ngrok dashboard at http://127.0.0.1:4040 to inspect requests.")
-        return https_url
+        # Try to start ngrok with retries
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Ensure no existing tunnels
+                for tunnel in ngrok.get_tunnels():
+                    ngrok.disconnect(tunnel.public_url)
+                
+                # Simplified connection without problematic options
+                https_url = ngrok.connect(port).public_url
+                
+                print(f"\nNgrok Tunnel URL: {https_url}")
+                return https_url
+                
+            except Exception as e:
+                print(f"Attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    print("Retrying after cleanup...")
+                    cleanup_ports_background()
+                    time.sleep(2)  # Wait before retry
+                else:
+                    raise Exception(f"Failed to start ngrok after {max_retries} attempts")
+                    
     except Exception as e:
         print(f"Error starting ngrok: {e}")
         return None

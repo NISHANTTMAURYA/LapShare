@@ -312,10 +312,36 @@ def import_file():
 def open_settings():
     open_token_dialog()  # Reuse the same dialog for settings
 
+def create_hyperlink(parent, url, text=None):
+    """Create a clickable hyperlink"""
+    if text is None:
+        text = url
+        
+    def open_url(event):
+        import webbrowser
+        webbrowser.open_new(url)
+        
+    def copy_url(event):
+        parent.clipboard_clear()
+        parent.clipboard_append(url)
+        messagebox.showinfo("Copied", "Link copied to clipboard!")
+        
+    link = tk.Label(
+        parent,
+        text=text,
+        font=('Helvetica', 10, 'underline'),
+        fg='#4A9EFF',
+        bg='#2A2829',
+        cursor='hand2'
+    )
+    link.bind("<Button-1>", open_url)
+    link.bind("<Button-3>", copy_url)  # Right click to copy
+    return link
+
 class app:
     def __init__(self, master):
         self.master = master
-        self.master.geometry("400x600")  
+        self.master.geometry("500x700")  
         self.master.configure(bg='#2C2C2C')  
         self.server_process = None
         self.qr_label = None
@@ -414,31 +440,83 @@ class app:
         )
         settings_btn.pack(pady=15)
 
-        # Add authentication steps
-        steps_text = """
-How to get Authentication Token:
-1. Sign up at dashboard.ngrok.com/signup
-2. Get your token from dashboard.ngrok.com/get-started/your-authtoken
-3. Click Settings and paste your token
-        """
-        
-        steps_label = tk.Label(
-            button_frame,
-            text=steps_text,
-            font=('Helvetica', 10),
+        # Create a frame for the steps
+        steps_frame = tk.Frame(button_frame, bg='#2A2829')
+        steps_frame.pack(pady=5)
+
+        # Title for steps
+        tk.Label(
+            steps_frame,
+            text="How to get Authentication Token:",
+            font=('Helvetica', 10, 'bold'),
             fg='#B0B0B0',
             bg='#2A2829',
-            justify='left',
-            pady=10
-        )
-        steps_label.pack(pady=5)
+            justify='left'
+        ).pack(anchor='w')
+
+        # Step 1 with link
+        step1_frame = tk.Frame(steps_frame, bg='#2A2829')
+        step1_frame.pack(anchor='w', fill='x')
+        
+        tk.Label(
+            step1_frame,
+            text="1. Sign up at",
+            font=('Helvetica', 10),
+            fg='#B0B0B0',
+            bg='#2A2829'
+        ).pack(side='left')
+        
+        create_hyperlink(
+            step1_frame,
+            "https://dashboard.ngrok.com/signup",
+            "dashboard.ngrok.com/signup"
+        ).pack(side='left', padx=5)
+
+        # Step 2 with link
+        step2_frame = tk.Frame(steps_frame, bg='#2A2829')
+        step2_frame.pack(anchor='w', fill='x', pady=5)  # Added padding between steps
+        
+        tk.Label(
+            step2_frame,
+            text="2. Get your token from",
+            font=('Helvetica', 10),
+            fg='#B0B0B0',
+            bg='#2A2829'
+        ).pack(side='left')
+        
+        create_hyperlink(
+            step2_frame,
+            "https://dashboard.ngrok.com/get-started/your-authtoken",
+            "dashboard.ngrok.com/get-started/your-authtoken"
+        ).pack(side='left', padx=5)
+
+        # Step 3
+        step3_frame = tk.Frame(steps_frame, bg='#2A2829')
+        step3_frame.pack(anchor='w', fill='x', pady=5)  # Added padding between steps
+        
+        tk.Label(
+            step3_frame,
+            text="3. Click Settings and paste your token",
+            font=('Helvetica', 10),
+            fg='#B0B0B0',
+            bg='#2A2829'
+        ).pack(anchor='w')
+
+        # Tip about copying
+        tk.Label(
+            steps_frame,
+            text="(Right-click links to copy)",
+            font=('Helvetica', 8, 'italic'),
+            fg='#808080',
+            bg='#2A2829'
+        ).pack(anchor='w', pady=(5,0))
 
         # Modified hover effects
         def on_enter(e):
             e.widget['background'] = '#2B4865'
 
         def on_leave(e):
-            if e.widget != settings_btn:  # Don't change settings button color
+            if e.widget != settings_btn:
                 e.widget['background'] = '#3E6D9C'
 
         # Add rounded corners and hover effects

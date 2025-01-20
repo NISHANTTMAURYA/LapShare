@@ -7,14 +7,248 @@ import subprocess
 import os
 import threading
 import traceback
-import ngrok
+from pyngrok import ngrok
 import shutil
 import platform
 import sys
+import socketserver
+import http.server
+
+PORT = 8000
+class MyHttpRequestHandler(http.server.SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        super().end_headers()
+    
+    def list_directory(self, path):
+        try:
+            # List files and directories in current directory only
+            items = os.listdir(path)
+            files = []
+            folders = []
+            
+            for item in items:
+                if item != "index.html":
+                    full_path = os.path.join(path, item)
+                    if os.path.isfile(full_path):
+                        files.append(item)
+                    elif os.path.isdir(full_path):
+                        folders.append(item)
+            
+            files.sort()
+            folders.sort()
+
+            # Create HTML content
+            html = f'''
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <title>Shared Files from directory {os.path.basename(os.getcwd())}</title>
+                <style>
+                    body {{
+                        font-family: Arial, sans-serif;
+                        margin: 0;
+                        padding: 20px;
+                        background: #f5f5f5;
+                    }}
+                    .container {{
+                        max-width: 800px;
+                        margin: 0 auto;
+                        background: white;
+                        padding: 20px;
+                        border-radius: 8px;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                    }}
+                    h1 {{
+                        color: #333;
+                        margin-bottom: 20px;
+                    }}
+                    .file-list {{
+                        list-style: none;
+                        padding: 0;
+                    }}
+                    .file-item {{
+                        display: flex;
+                        align-items: center;
+                        padding: 10px;
+                        border-bottom: 1px solid #eee;
+                    }}
+                    .file-name {{
+                        flex-grow: 1;
+                        margin-right: 10px;
+                    }}
+                    .download-btn {{
+                        background: #4CAF50;
+                        color: white;
+                        padding: 8px 15px;
+                        border: none;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        text-decoration: none;
+                    }}
+                    .download-btn:hover {{
+                        background: #45a049;
+                    }}
+                    .download-all {{
+                        display: block;
+                        width: 200px;
+                        margin: 20px auto;
+                        text-align: center;
+                        background: #2196F3;
+                    }}
+                    .download-all:hover {{
+                        background: #1976D2;
+                    }}
+                    .download-all-files {{
+                        display: block;
+                        width: 200px;
+                        margin: 10px auto;
+                        text-align: center;
+                        background: #FF5722;
+                    }}
+                    .download-all-files:hover {{
+                        background: #F4511E;
+                    }}
+                    @media (max-width: 600px) {{
+                        body {{
+                            padding: 10px;
+                        }}
+                        .container {{
+                            padding: 10px;
+                        }}
+                        .file-item {{
+                            flex-direction: column;
+                            align-items: flex-start;
+                        }}
+                        .download-btn {{
+                            margin-top: 10px;
+                        }}
+                    }}
+                </style>
+                <script>
+                    function downloadAllFiles() {{
+                        const files = {str(files)};  // Only files, not folders
+                        let delay = 0;
+                        files.forEach(file => {{
+                            setTimeout(() => {{
+                                const link = document.createElement('a');
+                                link.href = file;
+                                link.download = file;
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
+                            }}, delay);
+                            delay += 500;
+                        }});
+                    }}
+                </script>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>Shared Files from directory {os.path.basename(os.getcwd())}</h1>
+                    <ul class="file-list">
+            '''
+
+            # Add folders first
+            for folder in folders:
+                html += f'''
+                <li class="file-item">
+                    <span class="file-name">📁 {folder}/</span>
+                </li>
+                '''
+
+            # Add files
+            for file in files:
+                html += f'''
+                <li class="file-item">
+                    <span class="file-name">📄 {file}</span>
+                    <a href="{file}" class="download-btn" download>Download</a>
+                </li>
+                '''
+
+            # Modified section: Show download options based on content
+            html += '</ul>'
+            
+            # Show "Download All as ZIP" if there are any files OR folders
+            if files or folders:
+                html += f'''
+                    <a href="download-all" class="download-btn download-all">Download All as ZIP</a>
+                '''
+            
+            # Show "Download All Files" only if there are files
+            if files:
+                html += f'''
+                    <a href="#" onclick="downloadAllFiles()" class="download-btn download-all-files">Download All Files</a>
+                '''
+            
+            html += '</div>'
+
+            html += '''
+            </body>
+            </html>
+            '''
+
+            # Send response
+            encoded = html.encode('utf-8', 'replace')
+            self.send_response(200)
+            self.send_header("Content-type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+            return None
+
+        except Exception as e:
+            print(f"Error in list_directory: {e}")
+            return super().list_directory(path)
+
+    def do_GET(self):
+        # Block any path traversal attempts
+        if '..' in self.path or '//' in self.path:
+            self.send_error(403, "Access denied")
+            return  #these three lines are for security
+        
+        if self.path == '/download-all':
+            try:
+                # Get the current directory name
+                current_dir = os.path.basename(os.getcwd())
+                zip_filename = f"{current_dir}.zip"
+                
+                # Create ZIP file in memory
+                memory_file = io.BytesIO()
+                with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+                    # Add all files in current directory to ZIP
+                    for root, dirs, files in os.walk(os.getcwd()):
+                        for file in files:
+                            if file != "index.html":  # Skip index.html
+                                file_path = os.path.join(root, file)
+                                arcname = os.path.relpath(file_path, os.getcwd())
+                                zf.write(file_path, arcname)
+
+                # Get ZIP file content
+                memory_file.seek(0)
+                content = memory_file.getvalue()
+
+                # Send ZIP file with directory name
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/zip')
+                self.send_header('Content-Disposition', f'attachment; filename="{zip_filename}"')
+                self.send_header('Content-Length', len(content))
+                self.end_headers()
+                self.wfile.write(content)
+                return
+
+            except Exception as e:
+                print(f"Error creating ZIP: {e}")
+                self.send_error(500, "Internal server error")
+                return
+
+        return super().do_GET()
+
 root = tk.Tk()
 root.title("Sharing window")
 import os,shutil
-filename = 'http_server.py'
+# filename = 'http_server.py'
 
 from tkinter.filedialog import SaveFileDialog,askdirectory
 def cleanup_ports_background():
@@ -172,6 +406,87 @@ def open_token_dialog(callback=None):
         padx=20
     ).pack(pady=20)
 
+def start_ngrok(port):
+    try:
+        # First try to get token from environment variable
+        auth_token = os.getenv('NGROK_AUTH_TOKEN')
+        
+        # If no environment variable, try to read from a local file
+        if not auth_token:
+            token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ngrok_token.txt')
+            try:
+                with open(token_file, 'r') as f:
+                    auth_token = f.read().strip()
+            except FileNotFoundError:
+                print("No ngrok token file found")
+                return None
+        
+        if not auth_token:
+            raise Exception("No ngrok authentication token provided")
+            
+        # Kill any existing ngrok processes first
+        cleanup_ports_background()
+            
+        # Set the auth token
+        ngrok.set_auth_token(auth_token)
+        
+        # Open an Ngrok tunnel on the specified port
+        https_url = ngrok.connect(port).public_url
+        print(f"\nNgrok Tunnel URL: {https_url}")
+        print("Visit the Ngrok dashboard at http://127.0.0.1:4040 to inspect requests.")
+        return https_url
+    except Exception as e:
+        print(f"Error starting ngrok: {e}")
+        return None
+
+def start_server(path, type_of_share, url_file, callback=None):
+    """Modified version of start_server that works with the UI"""
+    print("\nStarting server setup...")
+    
+    if not path:
+        print("No path selected!")
+        return False
+    
+    # Kill any existing ngrok processes first
+    cleanup_ports_background()
+    
+    print(f"Preparing to serve from directory: {path}")
+    os.chdir(path)
+    
+    # Start ngrok with retries
+    print("Starting ngrok tunnel...")
+    public_url = start_ngrok(PORT)
+    
+    if not public_url:
+        print("Failed to start ngrok tunnel")
+        return False
+    
+    # Write the URL to the specified file
+    print(f"Writing URL to file: {url_file}")
+    with open(url_file, 'w') as f:
+        f.write(public_url)
+
+    print("Starting HTTP server...")
+    try:
+        socketserver.TCPServer.allow_reuse_address = True
+        httpd = socketserver.TCPServer(("", PORT), MyHttpRequestHandler)
+        
+        # Start server in a separate thread
+        server_thread = threading.Thread(target=httpd.serve_forever)
+        server_thread.daemon = True
+        server_thread.start()
+        
+        print(f"\nLocal server running at: http://localhost:{PORT}")
+        print(f"Public URL: {public_url}")
+        
+        if callback:
+            callback(httpd)
+        return httpd
+        
+    except Exception as e:
+        print(f"Error starting server: {e}")
+        return False
+
 def import_folder():
     if not check_ngrok_token():
         open_token_dialog(import_folder)
@@ -192,7 +507,6 @@ def import_folder():
         
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            server_path = resource_path('http_server.py')
             url_file = os.path.join(script_dir, 'share_url.txt')
             
             # Clear any existing URL file
@@ -203,16 +517,14 @@ def import_folder():
             change_page = app(root)
             change_page.url_file = url_file
             
-            # Use the full path to Python interpreter when starting server
-            cmd = [python_cmd, server_path, file_path, 'folder', url_file]
-            print(f"Executing command: {' '.join(cmd)}")  # Debug print
-            change_page.server_process = subprocess.Popen(cmd)
+            # Start server directly instead of using subprocess
+            os.chdir(file_path)  # Change to selected directory
+            change_page.server = start_server(file_path, 'folder', url_file)
             
             change_page.page2()
             
         except Exception as e:
             print(f"Error starting server: {e}")
-            print(f"Command attempted: {python_cmd}")
             print(f"Full traceback: {traceback.format_exc()}")
         
     except Exception as e:
@@ -234,16 +546,9 @@ def import_file():
             print(f"- {file}")
         
         try:
-            import subprocess
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            server_path = resource_path('http_server.py')
             url_file = os.path.join(script_dir, 'share_url.txt')
             temp_dir = os.path.join(script_dir, 'temp_serve')
-            
-            print(f"\nDebug: Absolute paths:")
-            print(f"Script dir: {os.path.abspath(script_dir)}")
-            print(f"Server path: {os.path.abspath(server_path)}")
-            print(f"Temp dir: {os.path.abspath(temp_dir)}")
             
             # Clear any existing URL file
             if os.path.exists(url_file):
@@ -254,50 +559,19 @@ def import_file():
                 print(f"Debug: Removing existing temp directory")
                 shutil.rmtree(temp_dir)
             os.makedirs(temp_dir)
-            print(f"Debug: Created fresh temp directory at {os.path.abspath(temp_dir)}")
             
             # Copy all selected files to temp directory
-            print("\nDebug: Copying files to temp directory:")
             for file_path in files:
                 dest_path = os.path.join(temp_dir, os.path.basename(file_path))
-                print(f"Copying {file_path} -> {dest_path}")
                 shutil.copy2(file_path, dest_path)
-                # Verify file was copied
-                if os.path.exists(dest_path):
-                    print(f"Successfully copied: {os.path.basename(dest_path)} ({os.path.getsize(dest_path)} bytes)")
-                else:
-                    print(f"Warning: Failed to copy {os.path.basename(file_path)}")
-            
-            # Verify files in temp directory
-            print("\nDebug: Files in temp directory before server start:")
-            temp_files = os.listdir(temp_dir)
-            for file in temp_files:
-                file_path = os.path.join(temp_dir, file)
-                print(f"- {file} ({os.path.getsize(file_path)} bytes)")
-            
-            if not temp_files:
-                raise Exception("No files were copied to temp directory")
             
             # Create new app instance with clean state
             change_page = app(root)
             change_page.url_file = url_file
-            # Important: Change - we're serving from temp_dir but telling server it's a folder
-            change_page.server_process = subprocess.Popen([python_cmd, server_path, temp_dir, 'folder', url_file])
             
-            # Wait briefly to ensure server starts
-            time.sleep(1)
-            
-            # Verify temp directory still exists and has files
-            print("\nDebug: Verifying temp directory after server start:")
-            if os.path.exists(temp_dir):
-                files_after = os.listdir(temp_dir)
-                print(f"Temp directory exists at {os.path.abspath(temp_dir)}")
-                print(f"Files in temp_serve: {files_after}")
-                for file in files_after:
-                    file_path = os.path.join(temp_dir, file)
-                    print(f"- {file} ({os.path.getsize(file_path)} bytes)")
-            else:
-                print(f"Warning: Temp directory no longer exists at {os.path.abspath(temp_dir)}!")
+            # Start server directly instead of using subprocess
+            os.chdir(temp_dir)  # Change to temp directory
+            change_page.server = start_server(temp_dir, 'folder', url_file)
             
             change_page.page2()
             
@@ -343,26 +617,26 @@ class app:
         self.master = master
         self.master.geometry("500x700")  
         self.master.configure(bg='#2C2C2C')  
-        self.server_process = None
+        self.server = None  # Changed from server_process to server
         self.qr_label = None
         self.url_file = None
-        self.cleanup_done = False  # Add this flag
+        self.cleanup_done = False
         self.page1()
         self.master.protocol("WM_DELETE_WINDOW", self.on_closing)
     
     def on_closing(self):
-        if self.cleanup_done:  # Prevent double cleanup
+        if self.cleanup_done:
             self.master.destroy()
             return
             
         try:
-            if self.server_process:
-                self.server_process.terminate()
-                self.server_process = None
+            if self.server:
+                self.server.shutdown()  # Shutdown the server properly
+                self.server.server_close()
+                self.server = None
             cleanup_ports_background()
             self.cleanup_done = True
             
-            # Don't wait - destroy immediately
             self.master.destroy()
                 
         except Exception as e:
@@ -618,9 +892,10 @@ class app:
 
             # Share Another File button with improved styling
             def share_another():
-                if self.server_process:
-                    self.server_process.terminate()
-                    self.server_process = None
+                if self.server:
+                    self.server.shutdown()  # Shutdown the server properly
+                    self.server.server_close()
+                    self.server = None
                 cleanup_ports_background()
                 # Don't wait - switch pages immediately
                 self.page1()
@@ -688,7 +963,7 @@ class app:
     #     print(f"Path: {path}")
     #     print(f"Is file: {is_file}")
         
-    #     if self.server_process and self.server_process.poll() is None:
+    #     if self.server and self.server.poll() is None:
     #         print("Server is running")
     #         try:
     #             # Update the server's directory
@@ -764,381 +1039,6 @@ except ImportError as e:
     print("Installed packages:", os.listdir(os.path.dirname(os.__file__) + "/site-packages"))
     sys.exit(1)
 
-class MyHttpRequestHandler(http.server.SimpleHTTPRequestHandler):
-    def end_headers(self):
-        self.send_header('Access-Control-Allow-Origin', '*')
-        super().end_headers()
-    
-    def list_directory(self, path):
-        try:
-            # List files and directories in current directory only
-            items = os.listdir(path)
-            files = []
-            folders = []
-            
-            for item in items:
-                if item != "index.html":
-                    full_path = os.path.join(path, item)
-                    if os.path.isfile(full_path):
-                        files.append(item)
-                    elif os.path.isdir(full_path):
-                        folders.append(item)
-            
-            files.sort()
-            folders.sort()
-
-            # Create HTML content
-            html = f'''
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta name="viewport" content="width=device-width, initial-scale=1">
-                <title>Shared Files from directory {os.path.basename(os.getcwd())}</title>
-                <style>
-                    body {{
-                        font-family: Arial, sans-serif;
-                        margin: 0;
-                        padding: 20px;
-                        background: #f5f5f5;
-                    }}
-                    .container {{
-                        max-width: 800px;
-                        margin: 0 auto;
-                        background: white;
-                        padding: 20px;
-                        border-radius: 8px;
-                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                    }}
-                    h1 {{
-                        color: #333;
-                        margin-bottom: 20px;
-                    }}
-                    .file-list {{
-                        list-style: none;
-                        padding: 0;
-                    }}
-                    .file-item {{
-                        display: flex;
-                        align-items: center;
-                        padding: 10px;
-                        border-bottom: 1px solid #eee;
-                    }}
-                    .file-name {{
-                        flex-grow: 1;
-                        margin-right: 10px;
-                    }}
-                    .download-btn {{
-                        background: #4CAF50;
-                        color: white;
-                        padding: 8px 15px;
-                        border: none;
-                        border-radius: 4px;
-                        cursor: pointer;
-                        text-decoration: none;
-                    }}
-                    .download-btn:hover {{
-                        background: #45a049;
-                    }}
-                    .download-all {{
-                        display: block;
-                        width: 200px;
-                        margin: 20px auto;
-                        text-align: center;
-                        background: #2196F3;
-                    }}
-                    .download-all:hover {{
-                        background: #1976D2;
-                    }}
-                    .download-all-files {{
-                        display: block;
-                        width: 200px;
-                        margin: 10px auto;
-                        text-align: center;
-                        background: #FF5722;
-                    }}
-                    .download-all-files:hover {{
-                        background: #F4511E;
-                    }}
-                    @media (max-width: 600px) {{
-                        body {{
-                            padding: 10px;
-                        }}
-                        .container {{
-                            padding: 10px;
-                        }}
-                        .file-item {{
-                            flex-direction: column;
-                            align-items: flex-start;
-                        }}
-                        .download-btn {{
-                            margin-top: 10px;
-                        }}
-                    }}
-                </style>
-                <script>
-                    function downloadAllFiles() {{
-                        const files = {str(files)};  // Only files, not folders
-                        let delay = 0;
-                        files.forEach(file => {{
-                            setTimeout(() => {{
-                                const link = document.createElement('a');
-                                link.href = file;
-                                link.download = file;
-                                document.body.appendChild(link);
-                                link.click();
-                                document.body.removeChild(link);
-                            }}, delay);
-                            delay += 500;
-                        }});
-                    }}
-                </script>
-            </head>
-            <body>
-                <div class="container">
-                    <h1>Shared Files from directory {os.path.basename(os.getcwd())}</h1>
-                    <ul class="file-list">
-            '''
-
-            # Add folders first
-            for folder in folders:
-                html += f'''
-                <li class="file-item">
-                    <span class="file-name">📁 {folder}/</span>
-                </li>
-                '''
-
-            # Add files
-            for file in files:
-                html += f'''
-                <li class="file-item">
-                    <span class="file-name">📄 {file}</span>
-                    <a href="{file}" class="download-btn" download>Download</a>
-                </li>
-                '''
-
-            # Modified section: Show download options based on content
-            html += '</ul>'
-            
-            # Show "Download All as ZIP" if there are any files OR folders
-            if files or folders:
-                html += f'''
-                    <a href="download-all" class="download-btn download-all">Download All as ZIP</a>
-                '''
-            
-            # Show "Download All Files" only if there are files
-            if files:
-                html += f'''
-                    <a href="#" onclick="downloadAllFiles()" class="download-btn download-all-files">Download All Files</a>
-                '''
-            
-            html += '</div>'
-
-            html += '''
-            </body>
-            </html>
-            '''
-
-            # Send response
-            encoded = html.encode('utf-8', 'replace')
-            self.send_response(200)
-            self.send_header("Content-type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(encoded)))
-            self.end_headers()
-            self.wfile.write(encoded)
-            return None
-
-        except Exception as e:
-            print(f"Error in list_directory: {e}")
-            return super().list_directory(path)
-
-    def do_GET(self):
-        # Block any path traversal attempts
-        if '..' in self.path or '//' in self.path:
-            self.send_error(403, "Access denied")
-            return  #these three lines are for security
-        
-        if self.path == '/download-all':
-            try:
-                # Get the current directory name
-                current_dir = os.path.basename(os.getcwd())
-                zip_filename = f"{current_dir}.zip"
-                
-                # Create ZIP file in memory
-                memory_file = io.BytesIO()
-                with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
-                    # Add all files in current directory to ZIP
-                    for root, dirs, files in os.walk(os.getcwd()):
-                        for file in files:
-                            if file != "index.html":  # Skip index.html
-                                file_path = os.path.join(root, file)
-                                arcname = os.path.relpath(file_path, os.getcwd())
-                                zf.write(file_path, arcname)
-
-                # Get ZIP file content
-                memory_file.seek(0)
-                content = memory_file.getvalue()
-
-                # Send ZIP file with directory name
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/zip')
-                self.send_header('Content-Disposition', f'attachment; filename="{zip_filename}"')
-                self.send_header('Content-Length', len(content))
-                self.end_headers()
-                self.wfile.write(content)
-                return
-
-            except Exception as e:
-                print(f"Error creating ZIP: {e}")
-                self.send_error(500, "Internal server error")
-                return
-
-        return super().do_GET()
-
-def start_ngrok(port):
-    try:
-        # First try to get token from environment variable
-        auth_token = os.getenv('NGROK_AUTH_TOKEN')
-        
-        # If no environment variable, try to read from a local file
-        if not auth_token:
-            token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ngrok_token.txt')
-            try:
-                with open(token_file, 'r') as f:
-                    auth_token = f.read().strip()
-            except FileNotFoundError:
-                # Create a dialog window for token input
-                dialog = tk.Toplevel()
-                dialog.title("Ngrok Authentication Required")
-                dialog.geometry("400x250")
-                dialog.configure(bg='#2C2C2C')
-                
-                # Center the dialog
-                dialog.transient(root)
-                dialog.grab_set()
-                
-                # Instructions
-                tk.Label(dialog, 
-                    text="Ngrok authentication required!",
-                    font=('Helvetica', 14, 'bold'),
-                    fg='#E8D5C4',
-                    bg='#2C2C2C',
-                    pady=10
-                ).pack()
-                
-                tk.Label(dialog,
-                    text="1. Sign up at dashboard.ngrok.com/signup\n2. Get your authtoken from\ndashboard.ngrok.com/get-started/your-authtoken",
-                    font=('Helvetica', 10),
-                    fg='#E8D5C4',
-                    bg='#2C2C2C',
-                    justify='left',
-                    pady=10
-                ).pack()
-                
-                # Token entry
-                token_var = tk.StringVar()
-                entry = tk.Entry(dialog, textvariable=token_var, width=40)
-                entry.pack(pady=10)
-                
-                def save_token():
-                    token = token_var.get().strip()
-                    if token:
-                        try:
-                            # Validate token before saving
-                            ngrok.set_auth_token(token)
-                            with open(token_file, 'w') as f:
-                                f.write(token)
-                            dialog.token = token
-                            dialog.destroy()
-                        except Exception as e:
-                            messagebox.showerror("Error", f"Invalid token: {str(e)}")
-                    else:
-                        messagebox.showerror("Error", "Please enter a valid token")
-                
-                # Save button
-                tk.Button(dialog,
-                    text="Save Token",
-                    command=save_token,
-                    bg='#3E6D9C',
-                    fg='black',
-                    font=('Helvetica', 12),
-                    pady=5,
-                    padx=20
-                ).pack(pady=20)
-                
-                # Wait for dialog
-                dialog.wait_window()
-                
-                # Get token from dialog
-                auth_token = getattr(dialog, 'token', None)
-        
-        if not auth_token:
-            raise Exception("No ngrok authentication token provided")
-            
-        # Kill any existing ngrok processes first
-        cleanup_ports_background()
-            
-        # Set the auth token
-        ngrok.set_auth_token(auth_token)
-        
-        # Configure ngrok to use a single session
-        ngrok.get_ngrok_process().stop_monitor_thread()
-        
-        # Open an Ngrok tunnel on the specified port
-        https_url = ngrok.connect(port, "http").public_url
-        print(f"\nNgrok Tunnel URL: {https_url}")
-        print("Visit the Ngrok dashboard at http://127.0.0.1:4040 to inspect requests.")
-        return https_url
-    except Exception as e:
-        print(f"Error starting ngrok: {e}")
-        return None
-
-def start_server(path, type_of_share, url_file, callback=None):
-    """Modified version of start_server that works with the UI"""
-    print("\nStarting server setup...")
-    
-    if not path:
-        print("No path selected!")
-        return False
-    
-    # Kill any existing ngrok processes first
-    cleanup_ports_background()
-    
-    print(f"Preparing to serve from directory: {path}")
-    os.chdir(path)
-    
-    # Start ngrok with retries
-    print("Starting ngrok tunnel...")
-    public_url = start_ngrok(PORT)
-    
-    if not public_url:
-        print("Failed to start ngrok tunnel")
-        return False
-    
-    # Write the URL to the specified file
-    print(f"Writing URL to file: {url_file}")
-    with open(url_file, 'w') as f:
-        f.write(public_url)
-
-    print("Starting HTTP server...")
-    try:
-        socketserver.TCPServer.allow_reuse_address = True
-        httpd = socketserver.TCPServer(("", PORT), MyHttpRequestHandler)
-        
-        # Start server in a separate thread
-        server_thread = threading.Thread(target=httpd.serve_forever)
-        server_thread.daemon = True
-        server_thread.start()
-        
-        print(f"\nLocal server running at: http://localhost:{PORT}")
-        print(f"Public URL: {public_url}")
-        
-        if callback:
-            callback(httpd)
-        return httpd
-        
-    except Exception as e:
-        print(f"Error starting server: {e}")
-        return False
 
 if __name__ == "__main__":
     if len(sys.argv) > 3:

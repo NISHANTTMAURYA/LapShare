@@ -5,18 +5,14 @@ from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
 
-# Collect all pyngrok and yaml packages and data
+# Collect all pyngrok packages and data
 pyngrok_datas, pyngrok_binaries, pyngrok_hiddenimports = collect_all('pyngrok')
-yaml_datas, yaml_binaries, yaml_hiddenimports = collect_all('yaml')
 
 a = Analysis(
     ['ui.py'],
     pathex=[],
-    binaries=pyngrok_binaries + yaml_binaries,
-    datas=[
-        ('http_server.py', '.'),
-        ('.env', '.'),
-    ] + pyngrok_datas + yaml_datas,
+    binaries=pyngrok_binaries,
+    datas=pyngrok_datas,
     hiddenimports=[
         'PIL._tkinter_finder',
         'pyngrok',
@@ -24,18 +20,7 @@ a = Analysis(
         'pyngrok.ngrok',
         'qrcode',
         'Pillow',
-        'python-dotenv',
-        'dotenv',
-        'yaml',
-        'yaml.loader',
-        'yaml.dumper',
-        'yaml.parser',
-        'yaml.emitter',
-        'yaml.serializer',
-        'yaml.representer',
-        'yaml.resolver',
-        'yaml.constructor'
-    ] + pyngrok_hiddenimports + yaml_hiddenimports,
+    ] + pyngrok_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

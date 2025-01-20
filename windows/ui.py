@@ -90,10 +90,96 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
+def check_ngrok_token():
+    """Check if ngrok token exists and is valid"""
+    token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ngrok_token.txt')
+    try:
+        with open(token_file, 'r') as f:
+            token = f.read().strip()
+            if token:
+                return True
+    except:
+        pass
+    return False
+
+def open_token_dialog(callback=None):
+    """Open dialog to get ngrok token"""
+    dialog = tk.Toplevel()
+    dialog.title("Ngrok Authentication Required")
+    dialog.geometry("400x250")
+    dialog.configure(bg='#2C2C2C')
+    
+    # Center the dialog
+    dialog.transient(root)
+    dialog.grab_set()
+    
+    # Instructions
+    tk.Label(dialog, 
+        text="Ngrok authentication required!",
+        font=('Helvetica', 14, 'bold'),
+        fg='#E8D5C4',
+        bg='#2C2C2C',
+        pady=10
+    ).pack()
+    
+    tk.Label(dialog,
+        text="1. Sign up at dashboard.ngrok.com/signup\n2. Get your authtoken from\ndashboard.ngrok.com/get-started/your-authtoken",
+        font=('Helvetica', 10),
+        fg='#E8D5C4',
+        bg='#2C2C2C',
+        justify='left',
+        pady=10
+    ).pack()
+    
+    # Get existing token if any
+    token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ngrok_token.txt')
+    current_token = ""
+    try:
+        with open(token_file, 'r') as f:
+            current_token = f.read().strip()
+    except:
+        pass
+    
+    # Token entry with existing token if any
+    token_var = tk.StringVar(value=current_token)
+    entry = tk.Entry(dialog, textvariable=token_var, width=40)
+    entry.pack(pady=10)
+    
+    def save_token():
+        token = token_var.get().strip()
+        if token:
+            try:
+                # Validate token before saving
+                ngrok.set_auth_token(token)
+                with open(token_file, 'w') as f:
+                    f.write(token)
+                dialog.destroy()
+                if callback:
+                    callback()
+            except Exception as e:
+                messagebox.showerror("Error", f"Invalid token: {str(e)}")
+        else:
+            messagebox.showerror("Error", "Please enter a valid token")
+    
+    # Save button
+    tk.Button(dialog,
+        text="Save Token",
+        command=save_token,
+        bg='#3E6D9C',
+        fg='black',
+        font=('Helvetica', 12),
+        pady=5,
+        padx=20
+    ).pack(pady=20)
+
 def import_folder():
+    if not check_ngrok_token():
+        open_token_dialog(import_folder)
+        return
+        
     try:
         options = {
-            "initialdir": os.path.expanduser("~"),  # Use home directory as initial dir
+            "initialdir": os.path.expanduser("~"),
             "title": "Select a Folder"
         }
 
@@ -133,6 +219,10 @@ def import_folder():
         print(f"Error in import_folder: {e}")
 
 def import_file():
+    if not check_ngrok_token():
+        open_token_dialog(import_file)
+        return
+        
     try:
         global file_path
         files = filedialog.askopenfilenames(title="Select files to share", filetypes=[("All files", "*.*")])
@@ -219,9 +309,8 @@ def import_file():
         print(f"Error in import_file: {e}")
         print(f"Stack trace: {traceback.format_exc()}")
 
-
-
-
+def open_settings():
+    open_token_dialog()  # Reuse the same dialog for settings
 
 class app:
     def __init__(self, master):
@@ -259,7 +348,7 @@ class app:
             i.destroy()
 
         # Main frame with padding and dark cream background
-        self.frame1 = tk.Frame(self.master, bg='#2A2829')  # Darker background
+        self.frame1 = tk.Frame(self.master, bg='#2A2829')
         self.frame1.pack(expand=True, fill='both', padx=20, pady=20)
 
         # Title with enhanced styling
@@ -267,7 +356,7 @@ class app:
             self.frame1, 
             text='Share Files Securely',
             font=('Helvetica', 24, 'bold'),
-            fg='#E8D5C4',  # Cream colored text
+            fg='#E8D5C4',
             bg='#2A2829',
             pady=30
         )
@@ -286,8 +375,8 @@ class app:
             'relief': 'flat',
             'cursor': 'hand2',
             'borderwidth': 0,
-            'fg': 'black',          # Force black text
-            'activeforeground': 'black'  # Keep black even when clicked
+            'fg': 'black',
+            'activeforeground': 'black'
         }
 
         button1 = tk.Button(
@@ -308,20 +397,56 @@ class app:
         )
         button2.pack(pady=15)
 
-        # Modified hover effects (only changes background)
+        # Add Settings button
+        settings_btn = tk.Button(
+            button_frame,
+            text="⚙️ Settings",
+            command=open_settings,
+            bg='#3E6D9C',
+            font=('Helvetica', 12),
+            width=12,
+            height=1,
+            bd=0,
+            relief='flat',
+            cursor='hand2',
+            fg='black',
+            activeforeground='black'
+        )
+        settings_btn.pack(pady=15)
+
+        # Add authentication steps
+        steps_text = """
+How to get Authentication Token:
+1. Sign up at dashboard.ngrok.com/signup
+2. Get your token from dashboard.ngrok.com/get-started/your-authtoken
+3. Click Settings and paste your token
+        """
+        
+        steps_label = tk.Label(
+            button_frame,
+            text=steps_text,
+            font=('Helvetica', 10),
+            fg='#B0B0B0',
+            bg='#2A2829',
+            justify='left',
+            pady=10
+        )
+        steps_label.pack(pady=5)
+
+        # Modified hover effects
         def on_enter(e):
             e.widget['background'] = '#2B4865'
 
         def on_leave(e):
-            e.widget['background'] = '#3E6D9C'
+            if e.widget != settings_btn:  # Don't change settings button color
+                e.widget['background'] = '#3E6D9C'
 
         # Add rounded corners and hover effects
         for button in (button1, button2):
             button.bind("<Enter>", on_enter)
             button.bind("<Leave>", on_leave)
-            # Round corners using canvas
             button.configure(highlightthickness=0)
-            radius = 15  # Adjust for more/less curve
+            radius = 15
             button.configure(relief='flat', borderwidth=0)
 
     def page2(self):

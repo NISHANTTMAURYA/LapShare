@@ -315,7 +315,7 @@ def open_settings():
 class app:
     def __init__(self, master):
         self.master = master
-        self.master.geometry("400x600")  
+        self.master.geometry("500x700")  
         self.master.configure(bg='#2C2C2C')  
         self.server_process = None
         self.qr_label = None

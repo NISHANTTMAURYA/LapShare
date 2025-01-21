@@ -582,77 +582,49 @@ def import_file():
         files = filedialog.askopenfilenames(title="Select files to share", filetypes=[("All files", "*.*")])
         if not files:  # If user cancels selection
             return
-            
-        print(f"\nDebug: Selected files:")
-        for file in files:
-            print(f"- {file}")
-        
+
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             url_file = os.path.join(script_dir, 'share_url.txt')
             temp_dir = os.path.join(script_dir, 'temp_serve')
-            
-            # Clear any existing URL file
-            if os.path.exists(url_file):
-                os.remove(url_file)
-            
-            # Clean and recreate temp directory with proper cleanup
+
+            # First, stop the server if it's running
+            if hasattr(app, 'server') and app.server:
+                app.server.shutdown()
+                app.server.server_close()
+                app.server = None
+                time.sleep(1)  # Give it a moment to close
+
+            # Simple cleanup - just try to remove files first
             if os.path.exists(temp_dir):
-                print(f"Debug: Removing existing temp directory")
-                try:
-                    # Change directory to parent to release lock on temp_dir
-                    os.chdir(script_dir)
-                    # Wait for a moment to ensure all processes release the directory
-                    time.sleep(0.5)
-                    # Try multiple times to remove the directory
-                    for _ in range(3):
-                        try:
-                            shutil.rmtree(temp_dir)
-                            break
-                        except Exception as e:
-                            print(f"Attempt to remove directory failed: {e}")
-                            time.sleep(0.5)
-                except Exception as e:
-                    print(f"Failed to remove temp directory: {e}")
-                    # If we can't remove it, try to clean its contents
+                for file in os.listdir(temp_dir):
                     try:
-                        for item in os.listdir(temp_dir):
-                            item_path = os.path.join(temp_dir, item)
-                            try:
-                                if os.path.isfile(item_path):
-                                    os.unlink(item_path)
-                                elif os.path.isdir(item_path):
-                                    shutil.rmtree(item_path)
-                            except Exception as e:
-                                print(f"Failed to remove {item_path}: {e}")
-                    except Exception as e:
-                        print(f"Failed to clean temp directory contents: {e}")
-            
-            # Create temp directory if it doesn't exist
+                        os.remove(os.path.join(temp_dir, file))
+                    except:
+                        pass
+                try:
+                    os.rmdir(temp_dir)
+                except:
+                    pass
+
+            # Create fresh temp directory
             os.makedirs(temp_dir, exist_ok=True)
             
-            # Copy all selected files to temp directory
+            # Copy selected files
             for file_path in files:
-                dest_path = os.path.join(temp_dir, os.path.basename(file_path))
-                shutil.copy2(file_path, dest_path)
-            
-            # Create new app instance with clean state
+                shutil.copy2(file_path, temp_dir)
+
+            # Create new app instance and start server
             change_page = app(root)
             change_page.url_file = url_file
-            
-            # Start server directly instead of using subprocess
-            os.chdir(temp_dir)  # Change to temp directory
             change_page.server = start_server(temp_dir, 'folder', url_file)
-            
             change_page.page2()
-            
+
         except Exception as e:
-            print(f"Error starting server: {e}")
-            print(f"Stack trace: {traceback.format_exc()}")
-        
+            print(f"Error: {e}")
+
     except Exception as e:
         print(f"Error in import_file: {e}")
-        print(f"Stack trace: {traceback.format_exc()}")
 
 def open_settings():
     open_token_dialog()  # Reuse the same dialog for settings
